@@ -403,18 +403,16 @@ const App = () => {
                 const json = JSON.parse(text);
                 const candidate = Array.isArray(json) ? json : json.script;
                 if (!Array.isArray(candidate)) throw new Error('格式錯誤，需為陣列或包含 script 陣列');
-                const normalized = candidate
-                  .filter((item) => item.id !== '_meta') // 忽略劇本標頭
-                  .map((item, idx) => {
-                    if (!item.name || !item.team) throw new Error(`第 ${idx + 1} 筆缺少 name 或 team`);
-                    return {
-                      id: item.id || `custom_${idx}`,
-                      name: item.name,
-                      team: item.team,
-                      reminders: item.reminders || [],
-                      image: item.image || getIconUrl(item.id || item.name.replace(/\s+/g, '_'))
-                    };
-                  });
+                const normalized = candidate.map((item, idx) => {
+                  if (!item.name || !item.team) throw new Error(`第 ${idx + 1} 筆缺少 name 或 team`);
+                  return {
+                    id: item.id || `custom_${idx}`,
+                    name: item.name,
+                    team: item.team,
+                    reminders: item.reminders || [],
+                    image: item.image || getIconUrl(item.id || item.name.replace(/\s+/g, '_'))
+                  };
+                });
                 setScript(normalized);
                 addLog('action', `已載入自訂劇本：${file.name} (${normalized.length} 角色)`);
               } catch (err) {
