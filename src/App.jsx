@@ -93,6 +93,8 @@ const App = () => {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
   
   const containerRef = useRef(null);
+  const dragRafRef = useRef(null);
+  const pendingDragRef = useRef(null);
 
   const getInitialPosition = (index, total) => {
     const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
@@ -231,7 +233,18 @@ const App = () => {
     const rect = containerRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
-    setPlayers(prev => prev.map(p => p.id === isDraggingPlayer ? { ...p, x: Math.max(5, Math.min(95, x)), y: Math.max(5, Math.min(95, y)) } : p));
+    const clamped = { x: Math.max(5, Math.min(95, x)), y: Math.max(5, Math.min(95, y)) };
+
+    pendingDragRef.current = { id: isDraggingPlayer, ...clamped };
+    if (dragRafRef.current) return;
+
+    dragRafRef.current = requestAnimationFrame(() => {
+      const pending = pendingDragRef.current;
+      if (pending) {
+        setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
+      }
+      dragRafRef.current = null;
+    });
   };
 
   const handlePlayerMouseDown = (e, playerId) => {
@@ -240,6 +253,14 @@ const App = () => {
     setIsDraggingPlayer(playerId);
     e.preventDefault();
   };
+
+  useEffect(() => {
+    return () => {
+      if (dragRafRef.current) {
+        cancelAnimationFrame(dragRafRef.current);
+      }
+    };
+  }, []);
 
   const addTraveler = (travelerRole) => {
     const newTraveler = {
