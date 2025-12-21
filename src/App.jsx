@@ -530,6 +530,7 @@ const App = () => {
           onMouseMove={handleContainerMouseMove} 
           onMouseUp={() => setIsDraggingPlayer(null)} 
           className="flex-1 relative bg-slate-950 overflow-hidden flex items-center justify-center transition-all duration-300 ease-in-out"
+          style={{ touchAction: 'none' }}
         >
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_#111827_0%,_#020617_100%)]" />
           
@@ -634,15 +635,15 @@ const App = () => {
                 <div key={log.id} className="p-3 rounded-xl bg-black/30 border border-slate-800 flex flex-col gap-1.5 hover:bg-black/50 group relative">
                   <button 
                     onClick={() => deleteLog(log.id)} 
-                    className="absolute top-2 right-2 p-1.5 text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                    className="absolute top-1.5 right-1.5 p-2 text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
                     title="刪除紀錄"
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={18} />
                   </button>
                   
-                  <div className="flex justify-between items-center opacity-50 font-black text-[9px]">
-                    <span>{log.time}</span>
-                    <span className="bg-slate-800 px-2 py-0.5 rounded-full text-indigo-400 uppercase">{log.phase}</span>
+                  <div className="flex justify-between items-center opacity-70 font-black text-[9px] gap-2">
+                    <span className="bg-slate-800 px-2 py-0.5 rounded-full text-indigo-300 uppercase whitespace-nowrap">{log.phase}</span>
+                    <span className="text-right flex-1 truncate">{log.time}</span>
                   </div>
                   <div className={`${log.type === 'action' && log.content.includes('⚖️') ? 'text-yellow-400 font-bold' : log.type === 'phase' ? 'text-indigo-300 font-black border-l-2 border-indigo-500 pl-2' : 'text-slate-300'} pr-6`}>
                     {log.content}
