@@ -95,6 +95,7 @@ const App = () => {
   const containerRef = useRef(null);
   const dragRafRef = useRef(null);
   const pendingDragRef = useRef(null);
+  const lastDragAppliedRef = useRef({ id: null, x: null, y: null });
 
   const getInitialPosition = (index, total) => {
     const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
@@ -228,7 +229,7 @@ const App = () => {
     performDrop(targetPlayerId, draggedItem.type, draggedItem.data);
   };
 
-  const handleContainerMouseMove = (e) => {
+  const handleContainerPointerMove = (e) => {
     if (isDraggingPlayer === null || !containerRef.current || isLocked) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
@@ -241,15 +242,22 @@ const App = () => {
     dragRafRef.current = requestAnimationFrame(() => {
       const pending = pendingDragRef.current;
       if (pending) {
-        setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
+        const last = lastDragAppliedRef.current;
+        const hasChanged = last.id !== pending.id || Math.abs((last.x ?? 0) - pending.x) > 0.2 || Math.abs((last.y ?? 0) - pending.y) > 0.2;
+        if (hasChanged) {
+          lastDragAppliedRef.current = { id: pending.id, x: pending.x, y: pending.y };
+          setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
+        }
       }
       dragRafRef.current = null;
     });
   };
 
-  const handlePlayerMouseDown = (e, playerId) => {
+  const handlePlayerPointerDown = (e, playerId) => {
     if (isLocked) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+    containerRef.current?.setPointerCapture?.(e.pointerId);
+    lastDragAppliedRef.current = { id: null, x: null, y: null };
     setIsDraggingPlayer(playerId);
     e.preventDefault();
   };
@@ -403,16 +411,15 @@ const App = () => {
                 const json = JSON.parse(text);
                 const candidate = Array.isArray(json) ? json : json.script;
                 if (!Array.isArray(candidate)) throw new Error('格式錯誤，需為陣列或包含 script 陣列');
-                const normalized = candidate.map((item, idx) => {
-                  if (!item.name || !item.team) throw new Error(`第 ${idx + 1} 筆缺少 name 或 team`);
-                  return {
+                const normalized = candidate
+                  .filter((item) => item && item.id !== '_meta' && item.name && item.team)
+                  .map((item, idx) => ({
                     id: item.id || `custom_${idx}`,
                     name: item.name,
                     team: item.team,
                     reminders: item.reminders || [],
                     image: item.image || getIconUrl(item.id || item.name.replace(/\s+/g, '_'))
-                  };
-                });
+                  }));
                 setScript(normalized);
                 addLog('action', `已載入自訂劇本：${file.name} (${normalized.length} 角色)`);
               } catch (err) {
@@ -527,8 +534,8 @@ const App = () => {
         {/* 主遊戲畫布：現在會根據側邊欄狀態自動撐開 */}
         <main 
           ref={containerRef} 
-          onMouseMove={handleContainerMouseMove} 
-          onMouseUp={() => setIsDraggingPlayer(null)} 
+          onPointerMove={handleContainerPointerMove} 
+          onPointerUp={() => setIsDraggingPlayer(null)} 
           className="flex-1 relative bg-slate-950 overflow-hidden flex items-center justify-center transition-all duration-300 ease-in-out"
           style={{ touchAction: 'none' }}
         >
@@ -560,7 +567,7 @@ const App = () => {
                     key={player.id} 
                     data-player-id={player.id}
                     style={{ left: `${player.x}%`, top: `${player.y}%` }} 
-                    onMouseDown={(e) => handlePlayerMouseDown(e, player.id)} 
+                    onPointerDown={(e) => handlePlayerPointerDown(e, player.id)} 
                     onDrop={(e) => handleDrop(e, player.id)} 
                     onDragOver={(e) => e.preventDefault()} 
                     className={`absolute w-36 h-36 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-200 ${isDraggingPlayer === player.id ? 'z-[90]' : 'z-10'}`}
