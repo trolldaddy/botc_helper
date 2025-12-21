@@ -76,9 +76,11 @@ const App = () => {
   const [logs, setLogs] = useState([]);
   const [logInput, setLogInput] = useState("");
   const [draggedItem, setDraggedItem] = useState(null);
+  const [touchDragItem, setTouchDragItem] = useState(null);
   const [isLocked, setIsLocked] = useState(true);
   const [isDraggingPlayer, setIsDraggingPlayer] = useState(null);
   const [showTravelerMenu, setShowTravelerMenu] = useState(false);
+  const fileInputRef = useRef(null);
   
   const [nominationState, setNominationState] = useState({ 
     nominator: null, 
@@ -91,6 +93,9 @@ const App = () => {
   const [rightSidebarOpen, setRightSidebarOpen] = useState(true);
   
   const containerRef = useRef(null);
+  const dragRafRef = useRef(null);
+  const pendingDragRef = useRef(null);
+  const lastDragAppliedRef = useRef({ id: null, x: null, y: null });
 
   const getInitialPosition = (index, total) => {
     const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
@@ -170,15 +175,34 @@ const App = () => {
     e.dataTransfer.setData('text/plain', JSON.stringify({ type, data }));
   };
 
-  const handleDrop = (e, targetPlayerId) => {
-    e.preventDefault();
-    if (!draggedItem) return;
-    const { type, data } = draggedItem;
+  const startTouchDrag = (type, data) => {
+    const dragData = { type, data };
+    setDraggedItem(dragData);
+    setTouchDragItem(dragData);
+
+    const handleTouchEnd = (e) => {
+      const touch = e.changedTouches[0];
+      const el = document.elementFromPoint(touch.clientX, touch.clientY);
+      const playerEl = el?.closest?.('[data-player-id]');
+      if (playerEl) {
+        const targetId = Number(playerEl.dataset.playerId);
+        performDrop(targetId, dragData.type, dragData.data);
+      }
+      setTouchDragItem(null);
+      setDraggedItem(null);
+      window.removeEventListener('touchend', handleTouchEnd);
+    };
+
+    window.addEventListener('touchend', handleTouchEnd, { passive: false });
+  };
+
+  const performDrop = (targetPlayerId, type, data) => {
     const targetPlayer = players.find(p => p.id === targetPlayerId);
-    
+    if (!targetPlayer) return;
+
     if (type === 'nomination_trigger') {
       const nominator = players.find(p => p.id === data.fromId);
-      if (nominator.id === targetPlayerId) return; 
+      if (!nominator || nominator.id === targetPlayerId) return; 
       setPlayers(prev => prev.map(p => p.id === nominator.id ? { ...p, hasNominatedToday: true } : p));
       setNominationState({ nominator: nominator.id, target: targetPlayerId, active: true, willExecute: false });
     } else if (type === 'role') {
@@ -199,20 +223,52 @@ const App = () => {
     setDraggedItem(null);
   };
 
-  const handleContainerMouseMove = (e) => {
+  const handleDrop = (e, targetPlayerId) => {
+    e.preventDefault();
+    if (!draggedItem) return;
+    performDrop(targetPlayerId, draggedItem.type, draggedItem.data);
+  };
+
+  const handleContainerPointerMove = (e) => {
     if (isDraggingPlayer === null || !containerRef.current || isLocked) return;
     const rect = containerRef.current.getBoundingClientRect();
     const x = ((e.clientX - rect.left) / rect.width) * 100;
     const y = ((e.clientY - rect.top) / rect.height) * 100;
-    setPlayers(prev => prev.map(p => p.id === isDraggingPlayer ? { ...p, x: Math.max(5, Math.min(95, x)), y: Math.max(5, Math.min(95, y)) } : p));
+    const clamped = { x: Math.max(5, Math.min(95, x)), y: Math.max(5, Math.min(95, y)) };
+
+    pendingDragRef.current = { id: isDraggingPlayer, ...clamped };
+    if (dragRafRef.current) return;
+
+    dragRafRef.current = requestAnimationFrame(() => {
+      const pending = pendingDragRef.current;
+      if (pending) {
+        const last = lastDragAppliedRef.current;
+        const hasChanged = last.id !== pending.id || Math.abs((last.x ?? 0) - pending.x) > 0.2 || Math.abs((last.y ?? 0) - pending.y) > 0.2;
+        if (hasChanged) {
+          lastDragAppliedRef.current = { id: pending.id, x: pending.x, y: pending.y };
+          setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
+        }
+      }
+      dragRafRef.current = null;
+    });
   };
 
-  const handlePlayerMouseDown = (e, playerId) => {
+  const handlePlayerPointerDown = (e, playerId) => {
     if (isLocked) return;
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('button')) return;
+    containerRef.current?.setPointerCapture?.(e.pointerId);
+    lastDragAppliedRef.current = { id: null, x: null, y: null };
     setIsDraggingPlayer(playerId);
     e.preventDefault();
   };
+
+  useEffect(() => {
+    return () => {
+      if (dragRafRef.current) {
+        cancelAnimationFrame(dragRafRef.current);
+      }
+    };
+  }, []);
 
   const addTraveler = (travelerRole) => {
     const newTraveler = {
@@ -336,6 +392,43 @@ const App = () => {
               <MapPin size={14} /> 旅行者
             </button>
           )}
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 px-4 py-1.5 rounded-xl border border-slate-700 text-xs font-black text-slate-200 transition-all ml-2"
+          >
+            <Upload size={14} /> 載入劇本
+          </button>
+          <input 
+            ref={fileInputRef}
+            type="file"
+            accept="application/json"
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0];
+              if (!file) return;
+              try {
+                const text = await file.text();
+                const json = JSON.parse(text);
+                const candidate = Array.isArray(json) ? json : json.script;
+                if (!Array.isArray(candidate)) throw new Error('格式錯誤，需為陣列或包含 script 陣列');
+                const normalized = candidate
+                  .filter((item) => item && item.id !== '_meta' && item.name && item.team)
+                  .map((item, idx) => ({
+                    id: item.id || `custom_${idx}`,
+                    name: item.name,
+                    team: item.team,
+                    reminders: item.reminders || [],
+                    image: item.image || getIconUrl(item.id || item.name.replace(/\s+/g, '_'))
+                  }));
+                setScript(normalized);
+                addLog('action', `已載入自訂劇本：${file.name} (${normalized.length} 角色)`);
+              } catch (err) {
+                alert(`載入劇本失敗：${err.message}`);
+              } finally {
+                e.target.value = '';
+              }
+            }}
+          />
         </div>
 
         {nominationState.active && (
@@ -404,7 +497,12 @@ const App = () => {
                   <div className="grid grid-cols-2 gap-4">
                     {script.filter(r => r.team === team).map(role => (
                       <div key={role.id} className={`flex rounded-2xl border-2 overflow-hidden shadow-xl ${getTeamColor(team)} bg-slate-900/50 backdrop-blur-sm`}>
-                        <div draggable onDragStart={(e) => handleDragStart(e, 'role', role)} className="w-1/2 p-3 flex flex-col items-center justify-center border-r border-slate-800/50 cursor-grab hover:bg-white/5 transition-colors">
+                        <div 
+                          draggable 
+                          onDragStart={(e) => handleDragStart(e, 'role', role)} 
+                          onTouchStart={() => startTouchDrag('role', role)}
+                          className="w-1/2 p-3 flex flex-col items-center justify-center border-r border-slate-800/50 cursor-grab hover:bg-white/5 transition-colors"
+                        >
                           <div className="w-12 h-12 flex items-center justify-center mb-1">
                             {role.image ? <img src={role.image} className="w-full h-full object-contain filter drop-shadow-[0_0_5px_rgba(255,255,255,0.4)]" alt={role.name} /> : <div className="w-10 h-10 bg-slate-800 rounded-full flex items-center justify-center text-[10px]">?</div>}
                           </div>
@@ -412,7 +510,13 @@ const App = () => {
                         </div>
                         <div className="w-1/2 p-2 bg-black/40 flex flex-col gap-1.5 overflow-y-auto max-h-[110px]">
                           {role.reminders?.map((reminder, idx) => (
-                            <div key={idx} draggable onDragStart={(e) => handleDragStart(e, 'reminder', { label: reminder, color: 'bg-orange-800', sourceImage: role.image })} className="text-[10px] bg-slate-800 border border-slate-700 px-2 py-1.5 rounded-lg cursor-grab hover:bg-orange-900/40 text-slate-300 flex items-center gap-2 transition-all">
+                            <div 
+                              key={idx} 
+                              draggable 
+                              onDragStart={(e) => handleDragStart(e, 'reminder', { label: reminder, color: 'bg-orange-800', sourceImage: role.image })} 
+                              onTouchStart={() => startTouchDrag('reminder', { label: reminder, color: 'bg-orange-800', sourceImage: role.image })}
+                              className="text-[10px] bg-slate-800 border border-slate-700 px-2 py-1.5 rounded-lg cursor-grab hover:bg-orange-900/40 text-slate-300 flex items-center gap-2 transition-all"
+                            >
                               {role.image ? <img src={role.image} className="w-3.5 h-3.5 object-contain" alt="" /> : <span>📌</span>}
                               <span className="truncate">{reminder}</span>
                             </div>
@@ -430,15 +534,22 @@ const App = () => {
         {/* 主遊戲畫布：現在會根據側邊欄狀態自動撐開 */}
         <main 
           ref={containerRef} 
-          onMouseMove={handleContainerMouseMove} 
-          onMouseUp={() => setIsDraggingPlayer(null)} 
+          onPointerMove={handleContainerPointerMove} 
+          onPointerUp={() => setIsDraggingPlayer(null)} 
           className="flex-1 relative bg-slate-950 overflow-hidden flex items-center justify-center transition-all duration-300 ease-in-out"
+          style={{ touchAction: 'none' }}
         >
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_#111827_0%,_#020617_100%)]" />
           
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 z-20 bg-slate-900/95 p-4 rounded-3xl border border-slate-800 shadow-2xl flex gap-4 backdrop-blur">
             {COMMON_STATUS_TOKENS.map(token => (
-              <div key={token.id} draggable onDragStart={(e) => handleDragStart(e, 'status', token)} className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl cursor-grab hover:scale-110 transition-all border border-white/5 ${token.color}`}>
+              <div 
+                key={token.id} 
+                draggable 
+                onDragStart={(e) => handleDragStart(e, 'status', token)} 
+                onTouchStart={() => startTouchDrag('status', token)}
+                className={`flex flex-col items-center justify-center w-14 h-14 rounded-2xl cursor-grab hover:scale-110 transition-all border border-white/5 ${token.color}`}
+              >
                 <span className="text-2xl">{token.icon}</span>
                 <span className="text-[9px] mt-1 font-black opacity-60 uppercase">{token.label}</span>
               </div>
@@ -452,7 +563,15 @@ const App = () => {
               const spacing = isRightSide ? (-Math.PI / 6.5) : (Math.PI / 6.5);
               
               return (
-                <div key={player.id} style={{ left: `${player.x}%`, top: `${player.y}%` }} onMouseDown={(e) => handlePlayerMouseDown(e, player.id)} onDrop={(e) => handleDrop(e, player.id)} onDragOver={(e) => e.preventDefault()} className={`absolute w-36 h-36 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-200 ${isDraggingPlayer === player.id ? 'z-[90]' : 'z-10'}`}>
+                  <div 
+                    key={player.id} 
+                    data-player-id={player.id}
+                    style={{ left: `${player.x}%`, top: `${player.y}%` }} 
+                    onPointerDown={(e) => handlePlayerPointerDown(e, player.id)} 
+                    onDrop={(e) => handleDrop(e, player.id)} 
+                    onDragOver={(e) => e.preventDefault()} 
+                    className={`absolute w-36 h-36 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center transition-all duration-200 ${isDraggingPlayer === player.id ? 'z-[90]' : 'z-10'}`}
+                  >
                   
                   {player.tokens.map((t, idx) => (
                     <button 
@@ -467,7 +586,12 @@ const App = () => {
                   ))}
 
                   {isLocked && !nominationState.active && !player.hasNominatedToday && !player.isDead && (
-                    <div draggable onDragStart={(e) => handleDragStart(e, 'nomination_trigger', { fromId: player.id })} className="absolute -top-6 bg-yellow-500 text-black w-8 h-8 rounded-full flex items-center justify-center shadow-lg border-2 border-slate-900 cursor-grab z-50 hover:scale-110 transition-transform">
+                    <div 
+                      draggable 
+                      onDragStart={(e) => handleDragStart(e, 'nomination_trigger', { fromId: player.id })} 
+                      onTouchStart={() => startTouchDrag('nomination_trigger', { fromId: player.id })}
+                      className="absolute -top-6 bg-yellow-500 text-black w-8 h-8 rounded-full flex items-center justify-center shadow-lg border-2 border-slate-900 cursor-grab z-50 hover:scale-110 transition-transform"
+                    >
                       <span className="text-sm">📣</span>
                     </div>
                   )}
@@ -518,15 +642,15 @@ const App = () => {
                 <div key={log.id} className="p-3 rounded-xl bg-black/30 border border-slate-800 flex flex-col gap-1.5 hover:bg-black/50 group relative">
                   <button 
                     onClick={() => deleteLog(log.id)} 
-                    className="absolute top-2 right-2 p-1.5 text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                    className="absolute top-1.5 right-1.5 p-2 text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
                     title="刪除紀錄"
                   >
-                    <Trash2 size={14} />
+                    <Trash2 size={18} />
                   </button>
                   
-                  <div className="flex justify-between items-center opacity-50 font-black text-[9px]">
-                    <span>{log.time}</span>
-                    <span className="bg-slate-800 px-2 py-0.5 rounded-full text-indigo-400 uppercase">{log.phase}</span>
+                  <div className="flex justify-between items-center opacity-70 font-black text-[9px] gap-2">
+                    <span className="bg-slate-800 px-2 py-0.5 rounded-full text-indigo-300 uppercase whitespace-nowrap">{log.phase}</span>
+                    <span className="text-right flex-1 truncate">{log.time}</span>
                   </div>
                   <div className={`${log.type === 'action' && log.content.includes('⚖️') ? 'text-yellow-400 font-bold' : log.type === 'phase' ? 'text-indigo-300 font-black border-l-2 border-indigo-500 pl-2' : 'text-slate-300'} pr-6`}>
                     {log.content}
