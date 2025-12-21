@@ -242,12 +242,8 @@ const App = () => {
     dragRafRef.current = requestAnimationFrame(() => {
       const pending = pendingDragRef.current;
       if (pending) {
-        const last = lastDragAppliedRef.current;
-        const hasChanged = last.id !== pending.id || Math.abs((last.x ?? 0) - pending.x) > 0.2 || Math.abs((last.y ?? 0) - pending.y) > 0.2;
-        if (hasChanged) {
-          lastDragAppliedRef.current = { id: pending.id, x: pending.x, y: pending.y };
-          setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
-        }
+        lastDragAppliedRef.current = { id: pending.id, x: pending.x, y: pending.y };
+        setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
       }
       dragRafRef.current = null;
     });
@@ -260,6 +256,11 @@ const App = () => {
     lastDragAppliedRef.current = { id: null, x: null, y: null };
     setIsDraggingPlayer(playerId);
     e.preventDefault();
+  };
+
+  const handleContainerPointerUp = (e) => {
+    containerRef.current?.releasePointerCapture?.(e.pointerId);
+    setIsDraggingPlayer(null);
   };
 
   useEffect(() => {
@@ -535,7 +536,7 @@ const App = () => {
         <main 
           ref={containerRef} 
           onPointerMove={handleContainerPointerMove} 
-          onPointerUp={() => setIsDraggingPlayer(null)} 
+          onPointerUp={handleContainerPointerUp} 
           className="flex-1 relative bg-slate-950 overflow-hidden flex items-center justify-center transition-all duration-300 ease-in-out"
           style={{ touchAction: 'none' }}
         >
@@ -642,10 +643,10 @@ const App = () => {
                 <div key={log.id} className="p-3 rounded-xl bg-black/30 border border-slate-800 flex flex-col gap-1.5 hover:bg-black/50 group relative">
                   <button 
                     onClick={() => deleteLog(log.id)} 
-                    className="absolute top-1.5 right-1.5 p-2 text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all"
+                    className="absolute top-1.5 right-1.5 p-2 text-red-500 hover:text-red-400 hover:bg-red-500/10 rounded-lg transition-all z-20 pointer-events-auto"
                     title="刪除紀錄"
                   >
-                    <Trash2 size={18} />
+                    <Trash2 size={20} />
                   </button>
                   
                   <div className="flex justify-between items-center opacity-70 font-black text-[9px] gap-2">
