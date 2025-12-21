@@ -95,7 +95,6 @@ const App = () => {
   const containerRef = useRef(null);
   const dragRafRef = useRef(null);
   const pendingDragRef = useRef(null);
-  const lastDragAppliedRef = useRef({ id: null, x: null, y: null });
 
   const getInitialPosition = (index, total) => {
     const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
@@ -242,12 +241,7 @@ const App = () => {
     dragRafRef.current = requestAnimationFrame(() => {
       const pending = pendingDragRef.current;
       if (pending) {
-        const last = lastDragAppliedRef.current;
-        const hasChanged = last.id !== pending.id || Math.abs((last.x ?? 0) - pending.x) > 0.2 || Math.abs((last.y ?? 0) - pending.y) > 0.2;
-        if (hasChanged) {
-          lastDragAppliedRef.current = { id: pending.id, x: pending.x, y: pending.y };
-          setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
-        }
+        setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
       }
       dragRafRef.current = null;
     });
@@ -409,15 +403,16 @@ const App = () => {
                 const json = JSON.parse(text);
                 const candidate = Array.isArray(json) ? json : json.script;
                 if (!Array.isArray(candidate)) throw new Error('格式錯誤，需為陣列或包含 script 陣列');
-                const normalized = candidate
-                  .filter((item) => item && item.id !== '_meta' && item.name && item.team)
-                  .map((item, idx) => ({
+                const normalized = candidate.map((item, idx) => {
+                  if (!item.name || !item.team) throw new Error(`第 ${idx + 1} 筆缺少 name 或 team`);
+                  return {
                     id: item.id || `custom_${idx}`,
                     name: item.name,
                     team: item.team,
                     reminders: item.reminders || [],
                     image: item.image || getIconUrl(item.id || item.name.replace(/\s+/g, '_'))
-                  }));
+                  };
+                });
                 setScript(normalized);
                 addLog('action', `已載入自訂劇本：${file.name} (${normalized.length} 角色)`);
               } catch (err) {
