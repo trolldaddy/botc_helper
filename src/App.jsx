@@ -96,6 +96,10 @@ const App = () => {
   const dragRafRef = useRef(null);
   const pendingDragRef = useRef(null);
   const lastDragAppliedRef = useRef({ id: null, x: null, y: null });
+  const playerRefs = useRef({});
+  const playerPositionsRef = useRef({});
+  const lastPhaseSnapshotRef = useRef(null);
+  const lastPhaseLogIdRef = useRef(null);
 
   const getInitialPosition = (index, total) => {
     const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
@@ -106,7 +110,7 @@ const App = () => {
   const initializePlayers = (count) => {
     const newPlayers = Array.from({ length: count }, (_, i) => {
       const pos = getInitialPosition(i, count);
-      return { 
+      const player = { 
         id: Date.now() + i, 
         name: `玩家 ${i + 1}`, 
         role: null, 
@@ -119,6 +123,8 @@ const App = () => {
         hasVotedToday: false,
         isTraveler: false
       };
+      playerPositionsRef.current[player.id] = { x: pos.x, y: pos.y };
+      return player;
     });
     setPlayers(newPlayers);
     setPlayerCount(count);
@@ -127,9 +133,13 @@ const App = () => {
   useEffect(() => { initializePlayers(8); }, []);
 
   const addLog = (type, content) => {
-    const timestamp = new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timestamp = type === 'phase'
+      ? new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+      : null;
     const phaseLabel = gamePhase.time === 'setup' ? '設置' : `第 ${gamePhase.day} ${gamePhase.time === 'night' ? '夜' : '日'}`;
-    setLogs(prev => [{ id: Date.now() + Math.random(), time: timestamp, phase: phaseLabel, type, content }, ...prev]);
+    const id = Date.now() + Math.random();
+    setLogs(prev => [{ id, time: timestamp, phase: phaseLabel, type, content }, ...prev]);
+    return id;
   };
 
   const deleteLog = (logId) => {
@@ -155,19 +165,34 @@ const App = () => {
 
   const handlePhaseChange = () => {
     let nextPhase = { ...gamePhase };
+    const playersSnapshot = players.map(p => ({ ...p, tokens: [...p.tokens] }));
+    lastPhaseSnapshotRef.current = { phase: gamePhase, players: playersSnapshot };
     if (gamePhase.time === 'setup') {
       nextPhase = { day: 1, time: 'night' };
-      addLog('phase', '--- 遊戲正式開始 ---');
+      lastPhaseLogIdRef.current = addLog('phase', '--- 遊戲正式開始 ---');
     } else if (gamePhase.time === 'night') {
       nextPhase = { day: gamePhase.day, time: 'day' };
-      addLog('phase', `--- 第 ${gamePhase.day} 天天亮 ---`);
+      lastPhaseLogIdRef.current = addLog('phase', `--- 第 ${gamePhase.day} 天天亮 ---`);
     } else {
       nextPhase = { day: gamePhase.day + 1, time: 'night' };
-      addLog('phase', `--- 第 ${nextPhase.day} 夜入夜 ---`);
+      lastPhaseLogIdRef.current = addLog('phase', `--- 第 ${nextPhase.day} 夜入夜 ---`);
       setPlayers(prev => prev.map(p => ({ ...p, hasNominatedToday: false, hasVotedToday: false })));
     }
     setGamePhase(nextPhase);
     setNominationState({ nominator: null, target: null, active: false, willExecute: false });
+  };
+
+  const revertPhaseChange = () => {
+    const snapshot = lastPhaseSnapshotRef.current;
+    if (!snapshot) return;
+    setGamePhase(snapshot.phase);
+    setPlayers(snapshot.players);
+    if (lastPhaseLogIdRef.current) {
+      setLogs(prev => prev.filter(log => log.id !== lastPhaseLogIdRef.current));
+    }
+    setNominationState({ nominator: null, target: null, active: false, willExecute: false });
+    lastPhaseSnapshotRef.current = null;
+    lastPhaseLogIdRef.current = null;
   };
 
   const handleDragStart = (e, type, data) => {
@@ -243,11 +268,16 @@ const App = () => {
       const pending = pendingDragRef.current;
       if (pending) {
         lastDragAppliedRef.current = { id: pending.id, x: pending.x, y: pending.y };
-        setPlayers(prev => prev.map(p => p.id === pending.id ? { ...p, x: pending.x, y: pending.y } : p));
-      }
-      dragRafRef.current = null;
-    });
-  };
+        playerPositionsRef.current[pending.id] = { x: pending.x, y: pending.y };
+        const node = playerRefs.current[pending.id];
+        if (node) {
+          node.style.left = `${pending.x}%`;
+          node.style.top = `${pending.y}%`;
+        }
+    }
+    dragRafRef.current = null;
+  });
+};
 
   const handlePlayerPointerDown = (e, playerId) => {
     if (isLocked) return;
@@ -460,6 +490,7 @@ const App = () => {
                 {gamePhase.time === 'setup' ? '設置' : `D${gamePhase.day}${gamePhase.time === 'night' ? '夜' : '日'}`}
               </span>
               <button onClick={handlePhaseChange} className="px-2 py-0.5 hover:bg-slate-700 rounded-lg text-[10px] bg-slate-800 font-bold uppercase transition-colors">Next</button>
+              <button onClick={revertPhaseChange} className="ml-2 px-2 py-0.5 hover:bg-slate-700 rounded-lg text-[10px] bg-slate-900 border border-slate-700 font-bold uppercase transition-colors">Undo</button>
             </div>
           )}
           <button onClick={() => setIsLocked(!isLocked)} className={`p-2 rounded-lg transition-all ${isLocked ? 'text-slate-500 bg-slate-800' : 'bg-indigo-600 text-white'}`}><Lock size={18} /></button>
@@ -483,6 +514,7 @@ const App = () => {
         {/* 左側欄：優化過渡動畫與 overflow 處理 */}
         <aside 
           className={`bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 z-20 transition-all duration-300 ease-in-out overflow-hidden ${leftSidebarOpen ? 'w-[420px]' : 'w-0 border-r-0'}`}
+          style={{ touchAction: 'pan-y' }}
         >
           <div className="w-[420px] h-full flex flex-col">
             <div className="p-4 bg-black/20 font-black flex items-center justify-between gap-2 text-xs text-slate-500 tracking-widest uppercase border-b border-slate-800 shrink-0">
@@ -567,7 +599,8 @@ const App = () => {
                   <div 
                     key={player.id} 
                     data-player-id={player.id}
-                    style={{ left: `${player.x}%`, top: `${player.y}%` }} 
+                    ref={(el) => { if (el) { playerRefs.current[player.id] = el; } }}
+                    style={{ left: `${(playerPositionsRef.current[player.id]?.x ?? player.x)}%`, top: `${(playerPositionsRef.current[player.id]?.y ?? player.y)}%` }} 
                     onPointerDown={(e) => handlePlayerPointerDown(e, player.id)} 
                     onDrop={(e) => handleDrop(e, player.id)} 
                     onDragOver={(e) => e.preventDefault()} 
@@ -627,6 +660,7 @@ const App = () => {
         {/* 右側欄：日誌 */}
         <aside 
           className={`bg-slate-900 border-l border-slate-800 flex flex-col shrink-0 z-20 transition-all duration-300 ease-in-out overflow-hidden ${rightSidebarOpen ? 'w-80' : 'w-0 border-l-0'}`}
+          style={{ touchAction: 'pan-y' }}
         >
           <div className="w-80 h-full flex flex-col">
             <div className="p-4 bg-black/20 font-black flex items-center justify-between gap-2 text-xs text-slate-500 tracking-widest uppercase border-b border-slate-800 shrink-0">
@@ -651,7 +685,7 @@ const App = () => {
                   
                   <div className="flex justify-between items-center opacity-70 font-black text-[9px] gap-2">
                     <span className="bg-slate-800 px-2 py-0.5 rounded-full text-indigo-300 uppercase whitespace-nowrap">{log.phase}</span>
-                    <span className="text-right flex-1 truncate">{log.time}</span>
+                    {log.time && <span className="text-right flex-1 truncate">{log.time}</span>}
                   </div>
                   <div className={`${log.type === 'action' && log.content.includes('⚖️') ? 'text-yellow-400 font-bold' : log.type === 'phase' ? 'text-indigo-300 font-black border-l-2 border-indigo-500 pl-2' : 'text-slate-300'} pr-6`}>
                     {log.content}
