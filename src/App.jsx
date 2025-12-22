@@ -172,6 +172,8 @@ const App = () => {
     ];
 
     let nextPhase = { ...gamePhase };
+    const playersSnapshot = players.map(p => ({ ...p, tokens: [...p.tokens] }));
+    lastPhaseSnapshotRef.current = { phase: gamePhase, players: playersSnapshot };
     if (gamePhase.time === 'setup') {
       nextPhase = { day: 1, time: 'night' };
     } else if (gamePhase.time === 'night') {
