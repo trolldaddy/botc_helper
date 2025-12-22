@@ -98,8 +98,8 @@ const App = () => {
   const lastDragAppliedRef = useRef({ id: null, x: null, y: null });
   const playerRefs = useRef({});
   const playerPositionsRef = useRef({});
-  const lastPhaseSnapshotRef = useRef(null);
-  const lastPhaseLogIdRef = useRef(null);
+  const phaseHistoryRef = useRef([]);
+  const touchPreviewRef = useRef(null);
 
   const getInitialPosition = (index, total) => {
     const angle = (index / total) * 2 * Math.PI - Math.PI / 2;
@@ -132,11 +132,11 @@ const App = () => {
 
   useEffect(() => { initializePlayers(8); }, []);
 
-  const addLog = (type, content) => {
+  const addLog = (type, content, phaseOverride = null) => {
     const timestamp = type === 'phase'
       ? new Date().toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
       : null;
-    const phaseLabel = gamePhase.time === 'setup' ? '設置' : `第 ${gamePhase.day} ${gamePhase.time === 'night' ? '夜' : '日'}`;
+    const phaseLabel = phaseOverride || (gamePhase.time === 'setup' ? '設置' : `第 ${gamePhase.day} ${gamePhase.time === 'night' ? '夜' : '日'}`);
     const id = Date.now() + Math.random();
     setLogs(prev => [{ id, time: timestamp, phase: phaseLabel, type, content }, ...prev]);
     return id;
@@ -164,35 +164,49 @@ const App = () => {
   };
 
   const handlePhaseChange = () => {
+    const phaseLabel = gamePhase.time === 'setup' ? '設置' : `第 ${gamePhase.day} ${gamePhase.time === 'night' ? '夜' : '日'}`;
+    const playersSnapshot = players.map(p => ({ ...p, tokens: [...p.tokens] }));
+    phaseHistoryRef.current = [
+      { phase: gamePhase, players: playersSnapshot, phaseLabel, logId: null },
+      ...phaseHistoryRef.current
+    ];
+
     let nextPhase = { ...gamePhase };
     const playersSnapshot = players.map(p => ({ ...p, tokens: [...p.tokens] }));
     lastPhaseSnapshotRef.current = { phase: gamePhase, players: playersSnapshot };
     if (gamePhase.time === 'setup') {
       nextPhase = { day: 1, time: 'night' };
-      lastPhaseLogIdRef.current = addLog('phase', '--- 遊戲正式開始 ---');
     } else if (gamePhase.time === 'night') {
       nextPhase = { day: gamePhase.day, time: 'day' };
-      lastPhaseLogIdRef.current = addLog('phase', `--- 第 ${gamePhase.day} 天天亮 ---`);
     } else {
       nextPhase = { day: gamePhase.day + 1, time: 'night' };
-      lastPhaseLogIdRef.current = addLog('phase', `--- 第 ${nextPhase.day} 夜入夜 ---`);
       setPlayers(prev => prev.map(p => ({ ...p, hasNominatedToday: false, hasVotedToday: false })));
     }
+
+    const nextLabel = nextPhase.time === 'setup' ? '設置' : `第 ${nextPhase.day} ${nextPhase.time === 'night' ? '夜' : '日'}`;
+    const logContent = nextPhase.time === 'night'
+      ? `--- 第 ${nextPhase.day} 夜入夜 ---`
+      : nextPhase.time === 'day'
+        ? `--- 第 ${nextPhase.day} 天天亮 ---`
+        : '--- 遊戲正式開始 ---';
+
+    const logId = addLog('phase', logContent, nextLabel);
+    phaseHistoryRef.current[0].logId = logId;
+
     setGamePhase(nextPhase);
     setNominationState({ nominator: null, target: null, active: false, willExecute: false });
   };
 
   const revertPhaseChange = () => {
-    const snapshot = lastPhaseSnapshotRef.current;
-    if (!snapshot) return;
-    setGamePhase(snapshot.phase);
-    setPlayers(snapshot.players);
-    if (lastPhaseLogIdRef.current) {
-      setLogs(prev => prev.filter(log => log.id !== lastPhaseLogIdRef.current));
+    const [latest, ...rest] = phaseHistoryRef.current;
+    if (!latest) return;
+    setGamePhase(latest.phase);
+    setPlayers(latest.players);
+    if (latest.logId) {
+      setLogs(prev => prev.filter(log => log.id !== latest.logId));
     }
     setNominationState({ nominator: null, target: null, active: false, willExecute: false });
-    lastPhaseSnapshotRef.current = null;
-    lastPhaseLogIdRef.current = null;
+    phaseHistoryRef.current = rest;
   };
 
   const handleDragStart = (e, type, data) => {
@@ -204,6 +218,26 @@ const App = () => {
     const dragData = { type, data };
     setDraggedItem(dragData);
     setTouchDragItem(dragData);
+    const preview = document.createElement('div');
+    preview.style.position = 'fixed';
+    preview.style.pointerEvents = 'none';
+    preview.style.zIndex = '9999';
+    preview.style.opacity = '0.7';
+    preview.style.transform = 'translate(-50%, -50%)';
+    preview.style.width = '60px';
+    preview.style.height = '60px';
+    preview.style.borderRadius = '12px';
+    preview.style.background = '#111827';
+    preview.style.display = 'flex';
+    preview.style.alignItems = 'center';
+    preview.style.justifyContent = 'center';
+    preview.style.border = '1px solid rgba(255,255,255,0.2)';
+    preview.style.boxShadow = '0 10px 30px rgba(0,0,0,0.35)';
+    preview.innerHTML = data.image 
+      ? `<img src="${data.image}" style="max-width:48px;max-height:48px;" />` 
+      : `<span style="color:white;font-weight:900;">${data.name || data.label || '拖曳'}</span>`;
+    document.body.appendChild(preview);
+    touchPreviewRef.current = preview;
 
     const handleTouchEnd = (e) => {
       const touch = e.changedTouches[0];
@@ -215,9 +249,23 @@ const App = () => {
       }
       setTouchDragItem(null);
       setDraggedItem(null);
+      if (touchPreviewRef.current) {
+        document.body.removeChild(touchPreviewRef.current);
+        touchPreviewRef.current = null;
+      }
       window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchmove', handleTouchMove);
     };
 
+    const handleTouchMove = (e) => {
+      const touch = e.touches[0];
+      if (touchPreviewRef.current) {
+        touchPreviewRef.current.style.left = `${touch.clientX}px`;
+        touchPreviewRef.current.style.top = `${touch.clientY}px`;
+      }
+    };
+
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd, { passive: false });
   };
 
